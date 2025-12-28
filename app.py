@@ -1,5 +1,5 @@
 import streamlit as st
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 
 # -------------------------------
 # Page Config
@@ -13,7 +13,7 @@ st.set_page_config(
 st.title("📄 AI Agreement Risk Scanner")
 st.write(
     "Upload any agreement or terms & conditions PDF. "
-    "This tool will extract text and highlight **potential risks**."
+    "This tool will extract text and highlight potential risks."
 )
 
 # -------------------------------
@@ -31,7 +31,7 @@ def extract_text(uploaded_file):
     return text.strip()
 
 # -------------------------------
-# Simple Risk Analysis (Rule-based AI)
+# Risk Analysis (Rule-based)
 # -------------------------------
 def analyze_risks(text):
     risks = []
@@ -55,7 +55,6 @@ def analyze_risks(text):
             risks.append(explanation)
 
     risk_score = min(len(risks) * 10, 100)
-
     return risks, risk_score
 
 # -------------------------------
@@ -102,5 +101,4 @@ if uploaded_file:
 # Footer
 # -------------------------------
 st.markdown("---")
-st.caption("🚀 Built for learning & hackathons | AI Agreement Scanner")
-
+st.caption("🚀 AI Agreement Risk Scanner | Streamlit Cloud Ready")
