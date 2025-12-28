@@ -1,104 +1,81 @@
 import streamlit as st
 from pypdf import PdfReader
+import google.generativeai as genai
+import os
+
+# -------------------------------
+# Configure Gemini
+# -------------------------------
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+model = genai.GenerativeModel("gemini-pro")
 
 # -------------------------------
 # Page Config
 # -------------------------------
 st.set_page_config(
-    page_title="AI Agreement Risk Scanner",
+    page_title="AI Agreement Risk Scanner (Google Gemini)",
     page_icon="📄",
-    layout="centered"
 )
 
 st.title("📄 AI Agreement Risk Scanner")
-st.write(
-    "Upload any agreement or terms & conditions PDF. "
-    "This tool will extract text and highlight potential risks."
-)
+st.caption("Powered by Google Gemini AI")
 
 # -------------------------------
-# PDF Text Extraction
+# Extract PDF Text
 # -------------------------------
 def extract_text(uploaded_file):
     reader = PdfReader(uploaded_file)
     text = ""
-
     for page in reader.pages:
-        page_text = page.extract_text()
-        if page_text:
-            text += page_text + "\n"
-
+        if page.extract_text():
+            text += page.extract_text() + "\n"
     return text.strip()
 
 # -------------------------------
-# Risk Analysis (Rule-based)
+# Gemini Risk Analysis
 # -------------------------------
-def analyze_risks(text):
-    risks = []
+def analyze_with_gemini(text):
+    prompt = f"""
+You are a legal risk analyzer.
 
-    risk_keywords = {
-        "termination": "Agreement can be terminated without notice.",
-        "no liability": "Company limits its responsibility.",
-        "indemnify": "You may have to pay for company losses.",
-        "auto-renew": "Agreement renews automatically.",
-        "non-refundable": "Money paid cannot be recovered.",
-        "jurisdiction": "Legal disputes restricted to a specific location.",
-        "arbitration": "You give up the right to go to court.",
-        "third party": "Your data may be shared with third parties.",
-        "without notice": "Terms can change without informing you."
-    }
+Analyze the agreement below and respond in this format:
 
-    lower_text = text.lower()
+1. Overall Risk Level (Low / Medium / High)
+2. Risk Score (0-100)
+3. Top 5 Risky Clauses (bullet points)
+4. How this agreement can harm the user
+5. Simple advice for the user
 
-    for keyword, explanation in risk_keywords.items():
-        if keyword in lower_text:
-            risks.append(explanation)
-
-    risk_score = min(len(risks) * 10, 100)
-    return risks, risk_score
+AGREEMENT:
+{text}
+"""
+    response = model.generate_content(prompt)
+    return response.text
 
 # -------------------------------
-# File Upload
+# Upload PDF
 # -------------------------------
-uploaded_file = st.file_uploader(
-    "Upload Agreement PDF",
-    type=["pdf"]
-)
+uploaded_file = st.file_uploader("Upload Agreement PDF", type=["pdf"])
 
 if uploaded_file:
-    with st.spinner("Extracting text from PDF..."):
+    with st.spinner("Extracting text..."):
         text = extract_text(uploaded_file)
 
     if not text:
-        st.error("❌ No readable text found in this PDF.")
+        st.error("No readable text found.")
     else:
-        st.success("✅ Text extracted successfully")
+        st.success("Text extracted")
 
-        st.subheader("📜 Extracted Agreement Text")
-        st.text_area("Agreement Content", text, height=300)
+        st.subheader("📜 Agreement Text")
+        st.text_area("Content", text, height=250)
 
-        st.subheader("⚠️ Risk Analysis")
-        risks, score = analyze_risks(text)
+        if st.button("🔍 Analyze Agreement with AI"):
+            with st.spinner("Analyzing with Google Gemini..."):
+                analysis = analyze_with_gemini(text)
 
-        if risks:
-            for i, risk in enumerate(risks, start=1):
-                st.warning(f"{i}. {risk}")
-        else:
-            st.success("No major risk keywords found.")
+            st.subheader("⚠️ AI Risk Analysis")
+            st.markdown(analysis)
 
-        st.subheader("📊 Overall Risk Score")
-        st.progress(score)
-        st.write(f"**Risk Level:** {score} / 100")
-
-        if score >= 70:
-            st.error("🚨 High Risk Agreement – Read Carefully!")
-        elif score >= 40:
-            st.warning("⚠️ Medium Risk Agreement")
-        else:
-            st.success("✅ Low Risk Agreement")
-
-# -------------------------------
-# Footer
-# -------------------------------
 st.markdown("---")
-st.caption("🚀 AI Agreement Risk Scanner | Streamlit Cloud Ready")
+st.caption("Uses Google Gemini API | Educational Purpose Only")
+
