@@ -1,138 +1,106 @@
 import streamlit as st
-import pytesseract
-from pdf2image import convert_from_bytes
-from PIL import Image
-from sentence_transformers import SentenceTransformer, util
+from PyPDF2 import PdfReader
 
-# -----------------------------
-# PAGE CONFIG
-# -----------------------------
-st.set_page_config(page_title="AI Agreement Risk Scanner", layout="wide")
+# -------------------------------
+# Page Config
+# -------------------------------
+st.set_page_config(
+    page_title="AI Agreement Risk Scanner",
+    page_icon="📄",
+    layout="centered"
+)
 
-st.title("📄 AI-Driven Agreement Risk Scanner")
-st.write("Upload an agreement and let AI detect harmful clauses.")
+st.title("📄 AI Agreement Risk Scanner")
+st.write(
+    "Upload any agreement or terms & conditions PDF. "
+    "This tool will extract text and highlight **potential risks**."
+)
 
-# -----------------------------
-# LOAD AI MODEL (CACHE)
-# -----------------------------
-@st.cache_resource
-def load_model():
-    return SentenceTransformer("all-MiniLM-L6-v2")
+# -------------------------------
+# PDF Text Extraction
+# -------------------------------
+def extract_text(uploaded_file):
+    reader = PdfReader(uploaded_file)
+    text = ""
 
-model = load_model()
+    for page in reader.pages:
+        page_text = page.extract_text()
+        if page_text:
+            text += page_text + "\n"
 
-# -----------------------------
-# RISK KNOWLEDGE
-# -----------------------------
-RISK_EXAMPLES = {
-    "Termination without notice": [
-        "The company may terminate this agreement at any time",
-        "The employer can end the contract without prior notice"
-    ],
-    "Unlimited liability": [
-        "You agree to indemnify the company",
-        "You are responsible for all losses"
-    ],
-    "Data misuse": [
-        "Your personal data may be shared with third parties",
-        "We may distribute your information"
-    ],
-    "No legal recourse": [
-        "You waive your right to sue",
-        "Disputes shall be resolved by arbitration only"
-    ]
-}
+    return text.strip()
 
-RISK_EXPLANATIONS = {
-    "Termination without notice":
-        "You could suddenly lose your job or contract without warning.",
-    "Unlimited liability":
-        "You may be forced to pay damages even if you were not fully at fault.",
-    "Data misuse":
-        "Your personal or sensitive data could be shared or sold.",
-    "No legal recourse":
-        "You may lose the right to approach a court."
-}
+# -------------------------------
+# Simple Risk Analysis (Rule-based AI)
+# -------------------------------
+def analyze_risks(text):
+    risks = []
 
-# -----------------------------
-# PRE-COMPUTE RISK EMBEDDINGS
-# -----------------------------
-risk_embeddings = {}
-for risk, examples in RISK_EXAMPLES.items():
-    emb = model.encode(examples, convert_to_tensor=True)
-    risk_embeddings[risk] = emb.mean(dim=0)
+    risk_keywords = {
+        "termination": "Agreement can be terminated without notice.",
+        "no liability": "Company limits its responsibility.",
+        "indemnify": "You may have to pay for company losses.",
+        "auto-renew": "Agreement renews automatically.",
+        "non-refundable": "Money paid cannot be recovered.",
+        "jurisdiction": "Legal disputes restricted to a specific location.",
+        "arbitration": "You give up the right to go to court.",
+        "third party": "Your data may be shared with third parties.",
+        "without notice": "Terms can change without informing you."
+    }
 
-# -----------------------------
-# OCR FUNCTION
-# -----------------------------
-def extract_text(file):
-    if file.type == "application/pdf":
-        pages = convert_from_bytes(file.read())
-        text = ""
-        for page in pages:
-            text += pytesseract.image_to_string(page)
-        return text
+    lower_text = text.lower()
 
-    elif file.type.startswith("image"):
-        image = Image.open(file)
-        return pytesseract.image_to_string(image)
+    for keyword, explanation in risk_keywords.items():
+        if keyword in lower_text:
+            risks.append(explanation)
 
-    else:
-        return file.read().decode("utf-8")
+    risk_score = min(len(risks) * 10, 100)
 
-# -----------------------------
-# CLAUSE SPLITTER
-# -----------------------------
-def split_clauses(text):
-    clauses = text.split(".")
-    return [c.strip() for c in clauses if len(c.strip()) > 40]
+    return risks, risk_score
 
-# -----------------------------
-# AI RISK DETECTION
-# -----------------------------
-def detect_risks(clause, threshold=0.6):
-    clause_emb = model.encode(clause, convert_to_tensor=True)
-    results = []
-
-    for risk, emb in risk_embeddings.items():
-        score = util.cos_sim(clause_emb, emb).item()
-        if score >= threshold:
-            results.append((risk, round(score, 2)))
-
-    return results
-
-# -----------------------------
-# FILE UPLOAD
-# -----------------------------
+# -------------------------------
+# File Upload
+# -------------------------------
 uploaded_file = st.file_uploader(
-    "Upload Agreement (PDF / Image / Text)",
-    type=["pdf", "png", "jpg", "jpeg", "txt"]
+    "Upload Agreement PDF",
+    type=["pdf"]
 )
 
 if uploaded_file:
-    with st.spinner("🔍 Analyzing agreement using AI..."):
+    with st.spinner("Extracting text from PDF..."):
         text = extract_text(uploaded_file)
-        clauses = split_clauses(text)
 
-    st.success(f"Analysis complete. {len(clauses)} clauses found.")
+    if not text:
+        st.error("❌ No readable text found in this PDF.")
+    else:
+        st.success("✅ Text extracted successfully")
 
-    found_any = False
+        st.subheader("📜 Extracted Agreement Text")
+        st.text_area("Agreement Content", text, height=300)
 
-    for clause in clauses:
-        risks = detect_risks(clause)
-        for risk, score in risks:
-            found_any = True
-            st.warning(f"⚠ {risk} (Confidence: {score})")
-            st.write("**Clause:**")
-            st.write(clause)
-            st.write("**How this can harm you:**")
-            st.info(RISK_EXPLANATIONS[risk])
+        st.subheader("⚠️ Risk Analysis")
+        risks, score = analyze_risks(text)
 
-    if not found_any:
-        st.success("✅ No major risks detected.")
+        if risks:
+            for i, risk in enumerate(risks, start=1):
+                st.warning(f"{i}. {risk}")
+        else:
+            st.success("No major risk keywords found.")
 
-# -----------------------------
-# DISCLAIMER
-# -----------------------------
+        st.subheader("📊 Overall Risk Score")
+        st.progress(score)
+        st.write(f"**Risk Level:** {score} / 100")
+
+        if score >= 70:
+            st.error("🚨 High Risk Agreement – Read Carefully!")
+        elif score >= 40:
+            st.warning("⚠️ Medium Risk Agreement")
+        else:
+            st.success("✅ Low Risk Agreement")
+
+# -------------------------------
+# Footer
+# -------------------------------
 st.markdown("---")
-st.caption("⚠ This tool provides informational insights only and does NOT replace legal advice.")
+st.caption("🚀 Built for learning & hackathons | AI Agreement Scanner")
+
