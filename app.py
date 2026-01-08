@@ -1,81 +1,138 @@
 import streamlit as st
-from pypdf import PdfReader
-import google.generativeai as genai
-import os
+import pytesseract
+from pdf2image import convert_from_bytes
+from PIL import Image
+from sentence_transformers import SentenceTransformer, util
 
-# -------------------------------
-# Configure Gemini
-# -------------------------------
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-model = genai.GenerativeModel("gemini-pro")
+# -----------------------------
+# PAGE CONFIG
+# -----------------------------
+st.set_page_config(page_title="AI Agreement Risk Scanner", layout="wide")
 
-# -------------------------------
-# Page Config
-# -------------------------------
-st.set_page_config(
-    page_title="AI Agreement Risk Scanner (Google Gemini)",
-    page_icon="📄",
+st.title("📄 AI-Driven Agreement Risk Scanner")
+st.write("Upload an agreement and let AI detect harmful clauses.")
+
+# -----------------------------
+# LOAD AI MODEL (CACHE)
+# -----------------------------
+@st.cache_resource
+def load_model():
+    return SentenceTransformer("all-MiniLM-L6-v2")
+
+model = load_model()
+
+# -----------------------------
+# RISK KNOWLEDGE
+# -----------------------------
+RISK_EXAMPLES = {
+    "Termination without notice": [
+        "The company may terminate this agreement at any time",
+        "The employer can end the contract without prior notice"
+    ],
+    "Unlimited liability": [
+        "You agree to indemnify the company",
+        "You are responsible for all losses"
+    ],
+    "Data misuse": [
+        "Your personal data may be shared with third parties",
+        "We may distribute your information"
+    ],
+    "No legal recourse": [
+        "You waive your right to sue",
+        "Disputes shall be resolved by arbitration only"
+    ]
+}
+
+RISK_EXPLANATIONS = {
+    "Termination without notice":
+        "You could suddenly lose your job or contract without warning.",
+    "Unlimited liability":
+        "You may be forced to pay damages even if you were not fully at fault.",
+    "Data misuse":
+        "Your personal or sensitive data could be shared or sold.",
+    "No legal recourse":
+        "You may lose the right to approach a court."
+}
+
+# -----------------------------
+# PRE-COMPUTE RISK EMBEDDINGS
+# -----------------------------
+risk_embeddings = {}
+for risk, examples in RISK_EXAMPLES.items():
+    emb = model.encode(examples, convert_to_tensor=True)
+    risk_embeddings[risk] = emb.mean(dim=0)
+
+# -----------------------------
+# OCR FUNCTION
+# -----------------------------
+def extract_text(file):
+    if file.type == "application/pdf":
+        pages = convert_from_bytes(file.read())
+        text = ""
+        for page in pages:
+            text += pytesseract.image_to_string(page)
+        return text
+
+    elif file.type.startswith("image"):
+        image = Image.open(file)
+        return pytesseract.image_to_string(image)
+
+    else:
+        return file.read().decode("utf-8")
+
+# -----------------------------
+# CLAUSE SPLITTER
+# -----------------------------
+def split_clauses(text):
+    clauses = text.split(".")
+    return [c.strip() for c in clauses if len(c.strip()) > 40]
+
+# -----------------------------
+# AI RISK DETECTION
+# -----------------------------
+def detect_risks(clause, threshold=0.6):
+    clause_emb = model.encode(clause, convert_to_tensor=True)
+    results = []
+
+    for risk, emb in risk_embeddings.items():
+        score = util.cos_sim(clause_emb, emb).item()
+        if score >= threshold:
+            results.append((risk, round(score, 2)))
+
+    return results
+
+# -----------------------------
+# FILE UPLOAD
+# -----------------------------
+uploaded_file = st.file_uploader(
+    "Upload Agreement (PDF / Image / Text)",
+    type=["pdf", "png", "jpg", "jpeg", "txt"]
 )
 
-st.title("📄 AI Agreement Risk Scanner")
-st.caption("Powered by Google Gemini AI")
-
-# -------------------------------
-# Extract PDF Text
-# -------------------------------
-def extract_text(uploaded_file):
-    reader = PdfReader(uploaded_file)
-    text = ""
-    for page in reader.pages:
-        if page.extract_text():
-            text += page.extract_text() + "\n"
-    return text.strip()
-
-# -------------------------------
-# Gemini Risk Analysis
-# -------------------------------
-def analyze_with_gemini(text):
-    prompt = f"""
-You are a legal risk analyzer.
-
-Analyze the agreement below and respond in this format:
-
-1. Overall Risk Level (Low / Medium / High)
-2. Risk Score (0-100)
-3. Top 5 Risky Clauses (bullet points)
-4. How this agreement can harm the user
-5. Simple advice for the user
-
-AGREEMENT:
-{text}
-"""
-    response = model.generate_content(prompt)
-    return response.text
-
-# -------------------------------
-# Upload PDF
-# -------------------------------
-uploaded_file = st.file_uploader("Upload Agreement PDF", type=["pdf"])
-
 if uploaded_file:
-    with st.spinner("Extracting text..."):
+    with st.spinner("🔍 Analyzing agreement using AI..."):
         text = extract_text(uploaded_file)
+        clauses = split_clauses(text)
 
-    if not text:
-        st.error("No readable text found.")
-    else:
-        st.success("Text extracted")
+    st.success(f"Analysis complete. {len(clauses)} clauses found.")
 
-        st.subheader("📜 Agreement Text")
-        st.text_area("Content", text, height=250)
+    found_any = False
 
-        if st.button("🔍 Analyze Agreement with AI"):
-            with st.spinner("Analyzing with Google Gemini..."):
-                analysis = analyze_with_gemini(text)
+    for clause in clauses:
+        risks = detect_risks(clause)
+        for risk, score in risks:
+            found_any = True
+            st.warning(f"⚠ {risk} (Confidence: {score})")
+            st.write("**Clause:**")
+            st.write(clause)
+            st.write("**How this can harm you:**")
+            st.info(RISK_EXPLANATIONS[risk])
 
-            st.subheader("⚠️ AI Risk Analysis")
-            st.markdown(analysis)
+    if not found_any:
+        st.success("✅ No major risks detected.")
 
+# -----------------------------
+# DISCLAIMER
+# -----------------------------
 st.markdown("---")
-st.caption("Uses Google Gemini API | Educational Purpose Only")
-
+st.caption("⚠ This tool provides informational insights only and does NOT replace legal advice.")
